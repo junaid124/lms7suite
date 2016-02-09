@@ -15,6 +15,10 @@
 
 using namespace lime;
 
+bool SkipRxCalibration = false;
+bool SkipTxCalibration = false;
+bool calibrateOnce = false;
+
 #define dirName ((direction == SOAPY_SDR_RX)?"Rx":"Tx")
 
 /*******************************************************************
@@ -90,8 +94,9 @@ SoapyLMS7::SoapyLMS7(const ConnectionHandle &handle, const SoapySDR::Kwargs &arg
         st = _rfics.back()->UploadAll();
         if (st != LIBLMS7_SUCCESS) throw std::runtime_error("UploadAll() failed");
 
-        st = _rfics.back()->RegistersTest();
-        if (st != LIBLMS7_SUCCESS) throw std::runtime_error("RegistersTest() failed");
+        //disable register test to speed up setup
+        //st = _rfics.back()->RegistersTest();
+        //if (st != LIBLMS7_SUCCESS) throw std::runtime_error("RegistersTest() failed");
     }
 
     //enable all channels
@@ -115,6 +120,9 @@ SoapyLMS7::SoapyLMS7(const ConnectionHandle &handle, const SoapySDR::Kwargs &arg
         this->setGain(SOAPY_SDR_RX, channel, "TIA", 0);
         this->setGain(SOAPY_SDR_TX, channel, "PAD", 0);
     }
+
+    if (args.count("calibrateOnce"))
+        calibrateOnce = std::stoi(args.at("calibrateOnce"));
 
     _conn->SetHardwareTimestamp(0);
 }
@@ -752,7 +760,8 @@ void SoapyLMS7::setBandwidth(const int direction, const size_t channel, const do
     auto &actual = _actualBw[direction][channel];
 
     actual = bw;
-    this->recalAfterChange(direction, channel);
+    //calibrate Rx/Tx when setting frequencies
+    //this->recalAfterChange(direction, channel);
 
     if (direction == SOAPY_SDR_RX)
     {
@@ -887,8 +896,24 @@ void SoapyLMS7::recalAfterChange(const int direction, const size_t channel)
     auto saveDcMode = this->getDCOffsetMode(direction, channel);
 
     auto rfic = getRFIC(channel);
-    if (direction == SOAPY_SDR_RX) rfic->CalibrateRx(bw/1e6);
-    if (direction == SOAPY_SDR_TX) rfic->CalibrateTx(bw/1e6);
+    if (direction == SOAPY_SDR_RX && !SkipRxCalibration)
+    {
+        rfic->CalibrateRx(bw/1e6);
+        if(calibrateOnce)
+        {
+            SkipRxCalibration = true;
+            printf("\t\tDisabling Rx calibration\n");
+        }
+    }
+    if (direction == SOAPY_SDR_TX && !SkipTxCalibration)
+    {
+        rfic->CalibrateTx(bw/1e6);
+        if(calibrateOnce)
+        {
+            SkipTxCalibration = true;
+            printf("\t\tDisabling Tx calibration\n");
+        }
+    }
 
     this->setDCOffsetMode(direction, channel, saveDcMode);
 }
